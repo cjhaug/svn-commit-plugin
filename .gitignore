@@ -1,0 +1,8 @@
+/bin
+/work*
+
+# Maven build files
+target/
+
+# Jenkins plugin development
+work/
