@@ -4,19 +4,23 @@ import groovy.lang.Binding;
 import groovy.lang.GroovyShell;
 import hudson.EnvVars;
 import hudson.FilePath;
+import hudson.FilePath.FileCallable;
 import hudson.Launcher;
 import hudson.model.BuildListener;
 import hudson.model.Result;
+import hudson.model.TaskListener;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
-import hudson.model.Cause;
-import hudson.model.Cause.UserIdCause;
+import hudson.model.Run;
+import hudson.remoting.VirtualChannel;
 import hudson.scm.SvnClientManager;
 import hudson.scm.SubversionSCM;
+import hudson.scm.SubversionSCM.ModuleLocation;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +30,7 @@ import org.tmatesoft.svn.core.SVNCommitInfo;
 import org.tmatesoft.svn.core.SVNDepth;
 import org.tmatesoft.svn.core.SVNException;
 import org.tmatesoft.svn.core.SVNProperties;
+import org.tmatesoft.svn.core.auth.ISVNAuthenticationProvider;
 import org.tmatesoft.svn.core.wc.ISVNStatusHandler;
 import org.tmatesoft.svn.core.wc.SVNCommitClient;
 import org.tmatesoft.svn.core.wc.SVNStatus;
@@ -61,67 +66,19 @@ public class SvnCommitPlugin {
 		EnvVars envVars = rootBuild.getEnvironment(listener);
 		scm.buildEnvVars(rootBuild, envVars);
 
-		// instantiate SVN authentication provider
-		// ISVNAuthenticationProvider authProvider = scm.getDescriptor()
-		// .createAuthenticationProvider(rootProject);
-		// if (authProvider == null) {
-		// logger.println(Messages.NoSVNAuthProvider());
-		// return true;
-		// }
-
-		// instantiate SVN authentication manager
-		// ISVNAuthenticationManager authManager = SVNWCUtil
-		// .createDefaultAuthenticationManager();
-		// authManager.setAuthenticationProvider(authProvider);
-		//
-		// SVNStatusClient statusClient = new SVNStatusClient(authManager,
-		// null);
-		// SVNCommitClient commitClient = new SVNCommitClient(authManager,
-		// null);
-
-		List<Cause> buildcauses = build.getCauses();
-		for (Cause buildcause : buildcauses) {
-			System.out.println(buildcause.toString());
-			if (buildcause instanceof UserIdCause) {
-				String userId = ((UserIdCause) buildcause).getUserId();
-				System.out.println("UserId [" + userId + "]");
-			}
-		}
-
-		SvnClientManager clientManager = SubversionSCM
-				.createClientManager(rootProject);
-		if (clientManager == null) {
-			logger.println(Messages.NoSVNAuthProvider());
-			return true;
-		}
-		SVNCommitClient commitClient = clientManager.getCommitClient();
-		SVNStatusClient statusClient = clientManager.getStatusClient();
-
-		FilePath workspace = build.getWorkspace().absolutize();
-
 		String evalCommitComment = evalGroovyExpression(envVars, commitComment);
 		SVNProperties revProps = new SVNProperties();
 		revProps.put("jenkins:svn-commit", "true");
 
 		// iterate over known SVN locations
-		for (FilePath location : scm.getModuleRoots(workspace, rootBuild)) {
-			File file = new File(location.toURI());
-			logger.println("as file object: " + file.toString());
-			try {
-				SvnCommitStatusHandler csHandler = new SvnCommitStatusHandler();
-				statusClient.doStatus(file, null, SVNDepth.INFINITY, false,
-						false, false, false, csHandler, null);
-				if (csHandler.hasChangedFiles()) {
-					SVNCommitInfo svnInfo = commitClient.doCommit(
-							csHandler.getChangedFiles(), false,
-							evalCommitComment, revProps, null, false, false,
-							SVNDepth.EMPTY);
-					logger.println(Messages.Commited(svnInfo.getNewRevision()));
-				}
-			} catch (SVNException e) {
-				logger.println(Messages.CommitFailed(e.getLocalizedMessage()));
-				return false;
-			}
+		FilePath workspace = build.getWorkspace().absolutize();
+		for (SubversionSCM.ModuleLocation ml : scm.getLocations(envVars,
+				rootBuild)) {
+
+			CommitTask commitTask = new CommitTask(build, scm, ml, listener,
+					evalCommitComment, revProps);
+			workspace.act(commitTask);
+
 		}
 
 		return true;
@@ -140,6 +97,57 @@ public class SvnCommitPlugin {
 		} else {
 			return result.toString().trim();
 		}
+	}
+
+	private static class CommitTask implements FileCallable<Boolean>,
+			Serializable {
+
+		private static final long serialVersionUID = 8940690511619984733L;
+		private ISVNAuthenticationProvider authProvider;
+		private SvnClientManager clientManager;
+		private TaskListener listener;
+		private String commitComment;
+		private SVNProperties revProps;
+
+		public CommitTask(Run<?, ?> build, SubversionSCM scm,
+				ModuleLocation location, TaskListener listener,
+				String commitComment, SVNProperties revProps) {
+			this.authProvider = scm.createAuthenticationProvider(
+					build.getParent(), location);
+			this.listener = listener;
+			this.commitComment = commitComment;
+			this.revProps = revProps;
+		}
+
+		public Boolean invoke(File file, VirtualChannel channel)
+				throws IOException, InterruptedException {
+			PrintStream logger = listener.getLogger();
+			clientManager = SubversionSCM.createClientManager(authProvider);
+
+			SVNCommitClient commitClient = clientManager.getCommitClient();
+			SVNStatusClient statusClient = clientManager.getStatusClient();
+
+			try {
+				SvnCommitStatusHandler csHandler = new SvnCommitStatusHandler();
+				statusClient.doStatus(file, null, SVNDepth.INFINITY, false,
+						false, false, false, csHandler, null);
+				if (csHandler.hasChangedFiles()) {
+					SVNCommitInfo svnInfo = commitClient.doCommit(
+							csHandler.getChangedFiles(), false, commitComment,
+							revProps, null, false, false, SVNDepth.EMPTY);
+					logger.println(Messages.Commited(svnInfo.getNewRevision()));
+				}
+			} catch (SVNException e) {
+				logger.println(Messages.CommitFailed(e.getLocalizedMessage()));
+				return false;
+			}
+			try {
+				return true;
+			} finally {
+				clientManager.dispose();
+			}
+		}
+
 	}
 
 	public final static class SvnCommitStatusHandler implements

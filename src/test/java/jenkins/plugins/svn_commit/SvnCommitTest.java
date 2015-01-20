@@ -18,7 +18,6 @@ import org.junit.Test;
 import org.jvnet.hudson.test.HudsonHomeLoader.CopyExisting;
 import org.jvnet.hudson.test.JenkinsRule;
 import org.jvnet.hudson.test.TestBuilder;
-import org.jvnet.hudson.test.TestEnvironment;
 
 public class SvnCommitTest {
 	static {
@@ -26,18 +25,7 @@ public class SvnCommitTest {
 	}
 
 	@Rule
-	public JenkinsRule j = new JenkinsRule() {
-		protected void after() throws Exception {
-			super.after();
-			if (TestEnvironment.get() != null) {
-				try {
-					TestEnvironment.get().dispose();
-				} catch (Exception e) {
-					e.printStackTrace();
-				}
-			}
-		};
-	};
+	public JenkinsRule j = new JenkinsRule();
 
 	@Test
 	public void first() throws Exception {
