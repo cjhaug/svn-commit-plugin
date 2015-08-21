@@ -33,6 +33,12 @@
 			<artifactId>subversion</artifactId>
 			<version>[1.28,)</version>
 		</dependency>
+		<dependency>
+			<groupId>org.jenkins-ci.plugins</groupId>
+			<artifactId>job-dsl</artifactId>
+			<version>1.33</version>
+			<optional>true</optional>
+		</dependency>
 
 		<!-- dependencies for tests -->
 		<dependency>
