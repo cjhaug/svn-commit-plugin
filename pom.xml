@@ -7,14 +7,20 @@
 		<version>1.568</version>
 	</parent>
 	<artifactId>svn-commit</artifactId>
-	<name>Jenkins Subversion commit Plugin</name>
+	<name>Jenkins Subversion Commit Plugin</name>
 	<version>0.1-SNAPSHOT</version>
 	<packaging>hpi</packaging>
+	<scm>
+		<connection>scm:git:git://github.com/cjhaug/${project.artifactId}-plugin.git</connection>
+		<developerConnection>scm:git:git://github.com/cjhaug/${project.artifactId}-plugin.git</developerConnection>
+		<url>scm:git:git://github.com/cjhaug/${project.artifactId}-plugin</url>
+		<tag>HEAD</tag>
+	</scm>
 	<developers>
 		<developer>
 			<id>cjh</id>
 			<name>Christian Haug</name>
-			<email>Christian.Haug@partner.bmw.de</email>
+			<email>ch@chaug.de</email>
 			<organization>BMW AG</organization>
 			<roles>
 				<role>developer</role>
