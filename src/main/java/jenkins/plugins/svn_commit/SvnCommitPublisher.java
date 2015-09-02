@@ -1,37 +1,35 @@
 package jenkins.plugins.svn_commit;
 
-import hudson.Extension;
-import hudson.Launcher;
-import hudson.model.BuildListener;
-import hudson.model.AbstractBuild;
-import hudson.model.AbstractProject;
-import hudson.tasks.BuildStepDescriptor;
-import hudson.tasks.BuildStepMonitor;
-import hudson.tasks.Notifier;
-import hudson.tasks.Publisher;
-import hudson.util.FormValidation;
-
 import java.io.IOException;
 import java.util.HashMap;
-
-import net.sf.json.JSONObject;
 
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 
+import hudson.Extension;
+import hudson.Launcher;
+import hudson.model.AbstractBuild;
+import hudson.model.AbstractProject;
+import hudson.model.BuildListener;
+import hudson.tasks.BuildStepDescriptor;
+import hudson.tasks.BuildStepMonitor;
+import hudson.tasks.Notifier;
+import hudson.tasks.Publisher;
+import hudson.util.FormValidation;
+import net.sf.json.JSONObject;
+
 public class SvnCommitPublisher extends Notifier {
 
-	private String commitComment = null;
+	public final String commitComment;
+	public final boolean includeIgnored;
 
 	@DataBoundConstructor
-	public SvnCommitPublisher(String commitComment) {
+	public SvnCommitPublisher(final String commitComment,
+			final boolean includeIgnored) {
 		this.commitComment = commitComment;
-	}
-
-	public String getCommitComment() {
-		return this.commitComment;
+		this.includeIgnored = includeIgnored;
 	}
 
 	public BuildStepMonitor getRequiredMonitorService() {
@@ -42,7 +40,7 @@ public class SvnCommitPublisher extends Notifier {
 	public boolean perform(AbstractBuild<?, ?> build, Launcher launcher,
 			BuildListener listener) throws InterruptedException, IOException {
 		return SvnCommitPlugin.perform(build, launcher, listener,
-				this.getCommitComment());
+				this.commitComment, this.includeIgnored);
 	}
 
 	@Override
@@ -51,13 +49,14 @@ public class SvnCommitPublisher extends Notifier {
 	}
 
 	@Extension
-	public static final class SvnCommitDescriptorImpl extends
-			BuildStepDescriptor<Publisher> {
+	public static final class SvnCommitDescriptorImpl
+			extends BuildStepDescriptor<Publisher> {
 
-		private String commitComment;
+		public final String commitComment;
 
 		public SvnCommitDescriptorImpl() {
-			this.commitComment = Messages.DefaultCommitComment();
+			commitComment = Messages.DefaultCommitComment();
+			load();
 		}
 
 		@SuppressWarnings("rawtypes")
@@ -78,14 +77,6 @@ public class SvnCommitPublisher extends Notifier {
 			save();
 
 			return super.configure(req, formData);
-		}
-
-		public String getCommitComment() {
-			return this.commitComment;
-		}
-
-		public void setCommitComment(String commitComment) {
-			this.commitComment = commitComment;
 		}
 
 		public FormValidation doCheckCommitComment(

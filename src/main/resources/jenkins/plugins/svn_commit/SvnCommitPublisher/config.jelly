@@ -2,4 +2,10 @@
   <f:entry title="${%Commit Comment}" field="commitComment" help="/plugin/svn-commit/help-commitComment.html">
     <f:textbox default="${descriptor.commitComment}"/>
   </f:entry>
+  
+  <f:advanced>
+    <f:entry title="${%Include ignored}" field="includeIgnored" help="/plugin/svn-commit/help-includeIgnored.html">
+      <f:checkbox />
+    </f:entry>
+  </f:advanced>
 </j:jelly>
