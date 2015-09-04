@@ -12,6 +12,7 @@ import java.util.Map;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.filefilter.FileFilterUtils;
 import org.apache.commons.io.filefilter.TrueFileFilter;
+import org.apache.commons.lang.StringUtils;
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.codehaus.groovy.control.CompilerConfiguration;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -53,22 +54,37 @@ import hudson.tasks.Publisher;
 import hudson.util.FormValidation;
 import net.sf.json.JSONObject;
 
+/**
+ * Execute Subversion commit for successful build.
+ *
+ * @author Christian Haug
+ */
 public class SvnCommitPublisher extends Notifier {
 
 	public final static String LOG_PREFIX = "[SVN-COMMIT] ";
 
+	/** Subversion commit comment. */
 	public final String commitComment;
+	/** Include ignored files. */
 	public final boolean includeIgnored;
 
+	/**
+	 * Creates a new instance of <code>SvnCommitPublisher</code>.
+	 * 
+	 * @param commitComment
+	 *            Subversion commit comment
+	 * @param includeIgnored
+	 *            Include ignored files
+	 */
 	@DataBoundConstructor
 	public SvnCommitPublisher(final String commitComment,
 			final boolean includeIgnored) {
-		this.commitComment = commitComment;
+		this.commitComment = StringUtils.stripToEmpty(commitComment);
 		this.includeIgnored = includeIgnored;
 	}
 
 	public BuildStepMonitor getRequiredMonitorService() {
-		return BuildStepMonitor.BUILD;
+		return BuildStepMonitor.NONE;
 	}
 
 	@Override
@@ -77,8 +93,9 @@ public class SvnCommitPublisher extends Notifier {
 	}
 
 	@Override
-	public boolean perform(AbstractBuild<?, ?> build, Launcher launcher,
-			BuildListener listener) throws InterruptedException, IOException {
+	public boolean perform(final AbstractBuild<?, ?> build,
+			final Launcher launcher, final BuildListener listener)
+					throws InterruptedException, IOException {
 		PrintStream logger = listener.getLogger();
 
 		if (Result.SUCCESS != build.getResult()) {
@@ -86,47 +103,70 @@ public class SvnCommitPublisher extends Notifier {
 			return true;
 		}
 
-		AbstractProject<?, ?> rootProject = build.getProject().getRootProject();
-		AbstractBuild<?, ?> rootBuild = build.getRootBuild();
+		try {
+			AbstractProject<?, ?> rootProject = build.getProject()
+					.getRootProject();
+			AbstractBuild<?, ?> rootBuild = build.getRootBuild();
 
-		if (!(rootProject.getScm() instanceof SubversionSCM)) {
-			logger.println(LOG_PREFIX
-					+ Messages.NotSubversion(rootProject.getScm().getType()));
+			if (!(rootProject.getScm() instanceof SubversionSCM)) {
+				logger.println(LOG_PREFIX + Messages
+						.NotSubversion(rootProject.getScm().getType()));
+				return true;
+			}
+			SubversionSCM scm = SubversionSCM.class.cast(rootProject.getScm());
+
+			// evaluate commit comment
+			EnvVars envVars = rootBuild.getEnvironment(listener);
+			scm.buildEnvVars(rootBuild, envVars);
+			String evalCommitComment = getDescriptor()
+					.evalGroovyExpression(envVars, commitComment);
+
+			// subversion revision property
+			SVNProperties revProps = new SVNProperties();
+			revProps.put("jenkins:svn-commit", "");
+
+			// iterate over known SVN locations
+			FilePath workspace = build.getWorkspace().absolutize();
+			for (SubversionSCM.ModuleLocation ml : scm.getLocations(envVars,
+					rootBuild)) {
+
+				SvnCommitTask commitTask = new SvnCommitTask(build, scm, ml,
+						listener, evalCommitComment, includeIgnored, revProps);
+				workspace.act(commitTask);
+
+			}
+			return true;
+		} catch (InterruptedException e) {
+			logger.println(LOG_PREFIX + e.getLocalizedMessage());
 			return true;
 		}
-
-		SubversionSCM scm = SubversionSCM.class.cast(rootProject.getScm());
-		EnvVars envVars = rootBuild.getEnvironment(listener);
-		scm.buildEnvVars(rootBuild, envVars);
-
-		String evalCommitComment = getDescriptor().evalGroovyExpression(envVars,
-				commitComment);
-		SVNProperties revProps = new SVNProperties();
-		revProps.put("jenkins:svn-commit", "");
-
-		// iterate over known SVN locations
-		FilePath workspace = build.getWorkspace().absolutize();
-		for (SubversionSCM.ModuleLocation ml : scm.getLocations(envVars,
-				rootBuild)) {
-
-			SvnCommitTask commitTask = new SvnCommitTask(build, scm, ml,
-					listener, evalCommitComment, includeIgnored, revProps);
-			workspace.act(commitTask);
-
-		}
-
-		return true;
 	}
 
+	/**
+	 * This object gets instantiated on the master and then sent to the slave
+	 * via remoting, then used to {@linkplain #invoke(File, VirtualChannel)
+	 * perform the actual commit activity}.
+	 *
+	 * <p>
+	 * A number of contextual objects are defined as fields, to be used by the
+	 * {@link #invoke(File, VirtualChannel)} method. These fields are set by
+	 * {@link SvnCommitPublisher} before the invocation.
+	 */
 	private static class SvnCommitTask
 			implements FileCallable<Boolean>, Serializable {
 
 		private static final long serialVersionUID = 8940690511619984733L;
+		/** Authentication provided by Jenkins master. */
 		private ISVNAuthenticationProvider authProvider;
+		/** Factory for various subversion commands. */
 		private SvnClientManager clientManager;
+		/** Connected to build console. */
 		private TaskListener listener;
+		/** Commit message */
 		private String commitComment;
+		/** Include ignored files. */
 		private boolean includeIgnored;
+		/** Subversion revision properties. */
 		private SVNProperties revProps;
 
 		public SvnCommitTask(Run<?, ?> build, SubversionSCM scm,
@@ -168,12 +208,14 @@ public class SvnCommitPublisher extends Notifier {
 							SVNDepth.EMPTY, false, includeIgnored, true);
 				}
 				// commit changes
-				SVNCommitInfo svnInfo = commitClient.doCommit(
-						csHandler.getCommitFiles(), false, commitComment,
-						revProps, null, false, false, SVNDepth.EMPTY);
-				if (!svnInfo.equals(SVNCommitInfo.NULL)) {
-					logger.println(LOG_PREFIX
-							+ Messages.Commited(svnInfo.getNewRevision()));
+				if (csHandler.hasCommitFiles()) {
+					SVNCommitInfo svnInfo = commitClient.doCommit(
+							csHandler.getCommitFiles(), false, commitComment,
+							revProps, null, false, false, SVNDepth.EMPTY);
+					if (!svnInfo.equals(SVNCommitInfo.NULL)) {
+						logger.println(LOG_PREFIX
+								+ Messages.Commited(svnInfo.getNewRevision()));
+					}
 				}
 			} catch (SVNCancelException e) {
 				listener.error(LOG_PREFIX
@@ -195,7 +237,13 @@ public class SvnCommitPublisher extends Notifier {
 
 	}
 
-	public final static class SvnCommitStatusHandler
+	/**
+	 * Receive Subversion status information.
+	 * 
+	 * @author Christian Haug
+	 *
+	 */
+	private final static class SvnCommitStatusHandler
 			implements ISVNStatusHandler {
 
 		private List<File> changedFiles;
@@ -231,21 +279,17 @@ public class SvnCommitPublisher extends Notifier {
 			}
 		}
 
+		public boolean hasCommitFiles() {
+			return !changedFiles.isEmpty() || !missingFiles.isEmpty()
+					|| !unversionedFiles.isEmpty();
+		}
+
 		public File[] getCommitFiles() {
 			List<File> commitFiles = new ArrayList<File>();
 			commitFiles.addAll(changedFiles);
 			commitFiles.addAll(unversionedFiles);
 			commitFiles.addAll(missingFiles);
 			return commitFiles.toArray(new File[commitFiles.size()]);
-		}
-
-		public boolean hasChangedFiles() {
-			return !changedFiles.isEmpty();
-		}
-
-		public File[] getChangedFiles() {
-			return this.changedFiles
-					.toArray(new File[this.changedFiles.size()]);
 		}
 
 		public boolean hasUnversionedFiles() {
