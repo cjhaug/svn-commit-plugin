@@ -1,4 +1,4 @@
-package jenkins.plugins.svn_commit;
+package jenkins.plugins.svncommit;
 
 import hudson.Extension;
 import javaposse.jobdsl.dsl.Context;

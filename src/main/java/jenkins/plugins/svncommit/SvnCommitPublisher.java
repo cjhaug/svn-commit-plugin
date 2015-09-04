@@ -1,4 +1,4 @@
-package jenkins.plugins.svn_commit;
+package jenkins.plugins.svncommit;
 
 import java.io.File;
 import java.io.IOException;
