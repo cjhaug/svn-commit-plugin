@@ -2,6 +2,8 @@ package jenkins.plugins.svncommit;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.io.PrintStream;
 import java.io.Serializable;
 import java.util.ArrayList;
@@ -52,6 +54,7 @@ import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Notifier;
 import hudson.tasks.Publisher;
 import hudson.util.FormValidation;
+import hudson.util.StreamCopyThread;
 import net.sf.json.JSONObject;
 
 /**
@@ -186,10 +189,17 @@ public class SvnCommitPublisher extends Notifier {
 			PrintStream logger = listener.getLogger();
 			clientManager = SubversionSCM.createClientManager(authProvider);
 
-			SVNCommitClient commitClient = clientManager.getCommitClient();
-			SVNStatusClient statusClient = clientManager.getStatusClient();
+			PipedOutputStream pos = new PipedOutputStream();
+			StreamCopyThread sct = new StreamCopyThread("svn commit copier",
+					new PipedInputStream(pos), logger);
+			sct.start();
 
 			try {
+				SVNCommitClient commitClient = clientManager.getCommitClient();
+				commitClient.setEventHandler(
+						new SvnCommitEventHandler(new PrintStream(pos), file));
+				SVNStatusClient statusClient = clientManager.getStatusClient();
+
 				SvnCommitStatusHandler csHandler = new SvnCommitStatusHandler();
 				statusClient.doStatus(file, null, SVNDepth.INFINITY, false,
 						false, includeIgnored, false, csHandler, null);
@@ -212,9 +222,9 @@ public class SvnCommitPublisher extends Notifier {
 					SVNCommitInfo svnInfo = commitClient.doCommit(
 							csHandler.getCommitFiles(), false, commitComment,
 							revProps, null, false, false, SVNDepth.EMPTY);
-					if (!svnInfo.equals(SVNCommitInfo.NULL)) {
-						logger.println(LOG_PREFIX
-								+ Messages.Commited(svnInfo.getNewRevision()));
+					if (svnInfo.equals(SVNCommitInfo.NULL)) {
+						throw new IOException(LOG_PREFIX + Messages
+								.CommitFailed(svnInfo.getErrorMessage()));
 					}
 				}
 			} catch (SVNCancelException e) {
@@ -227,14 +237,20 @@ public class SvnCommitPublisher extends Notifier {
 						+ Messages.CommitFailed(e.getLocalizedMessage()));
 				throw new IOException(LOG_PREFIX
 						+ Messages.CommitFailed(e.getLocalizedMessage()), e);
-			}
-			try {
-				return true;
 			} finally {
-				clientManager.dispose();
+				try {
+					clientManager.dispose();
+					pos.close();
+				} finally {
+					try {
+						sct.join();
+					} catch (InterruptedException e) {
+						throw new IOException(e);
+					}
+				}
 			}
+			return true;
 		}
-
 	}
 
 	/**
