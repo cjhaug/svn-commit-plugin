@@ -363,24 +363,29 @@ public class SvnCommitPublisher extends Notifier {
 			try {
 				evalGroovyExpression(new HashMap<String, String>(), value);
 				return FormValidation.ok();
-			} catch (CompilationFailedException e) {
-				return FormValidation.error(Messages.BadGroovy(e.getMessage()));
+			} catch (InterruptedException e) {
+				return FormValidation.error(e.getMessage());
 			}
 		}
 
 		public String evalGroovyExpression(Map<String, String> env,
-				String evalText) throws CompilationFailedException {
+				String evalText) throws InterruptedException {
 			Binding binding = new Binding();
 			binding.setVariable("env", env);
 			binding.setVariable("sys", System.getProperties());
 
 			CompilerConfiguration config = new CompilerConfiguration();
 			GroovyShell shell = new GroovyShell(binding, config);
-			Object result = shell.evaluate("return \"" + evalText + "\"");
-			if (result == null) {
-				return "";
-			} else {
-				return result.toString().trim();
+			try {
+				Object result = shell.evaluate("return \"" + evalText + "\"");
+				if (result == null) {
+					return "";
+				} else {
+					return result.toString().trim();
+				}
+			} catch (CompilationFailedException e) {
+				throw new InterruptedException(
+						Messages.BadGroovy(e.getMessage()));
 			}
 		}
 
